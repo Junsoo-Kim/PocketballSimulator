@@ -40,11 +40,17 @@ public class Ball {
 
 	public void calcNext() {
 		if (!isValid) return;
-		if (Math.abs(xVeloc) < Constant.VELOC_BOUND) xVeloc = 0;
-		if (Math.abs(yVeloc) < Constant.VELOC_BOUND) yVeloc = 0;
 
-		xVeloc *= (1 - Constant.FRICTION);
-		yVeloc *= (1 - Constant.FRICTION);
+		double speed = Math.sqrt(xVeloc * xVeloc + yVeloc * yVeloc);
+		if (speed < Constant.VELOC_BOUND) {
+			xVeloc = 0;
+			yVeloc = 0;
+		} else {
+			//실제 클라이언트처럼, 속도에 비례해서가 아니라 매 프레임 일정한 크기만큼 감속한다(등감속 마찰).
+			double nextSpeed = Math.max(0, speed - Constant.FRICTION_DECEL);
+			xVeloc = xVeloc / speed * nextSpeed;
+			yVeloc = yVeloc / speed * nextSpeed;
+		}
 		ny = y + yVeloc;
 		nx = x + xVeloc;
 	}
@@ -75,8 +81,8 @@ public class Ball {
 	}
 
 	public void setVeloc(double xVeloc, double yVeloc){
-		this.xVeloc = 0;
-		this.yVeloc = 0;
+		this.xVeloc = xVeloc;
+		this.yVeloc = yVeloc;
 	}
 
 	public void setValid(boolean isValid){

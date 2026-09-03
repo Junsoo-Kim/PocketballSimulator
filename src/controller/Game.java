@@ -14,7 +14,20 @@ public class Game {
 	public static double[][] balls; //0번째는 큐 볼. balls[][0]은 x좌표, [1]은 y좌표, 마지막 번호의 공이 검은 공
 
 	public Toolkit toolkit = Toolkit.getDefaultToolkit();
-	public static final int[][] HOLES = { { 0, 0 }, { 127, 0 }, { 254, 0 }, { 0, 127 }, { 127, 127 }, { 254, 127 } };
+
+	//실제 클라이언트는 홀이 테이블 모서리/변의 정확한 좌표가 아니라 공 반지름의 일정 비율만큼
+	//안쪽으로 들어와 있는 것으로 알려져 있어(Constant.HOLE_INSET_RATIO), 그 형태를 흉내낸다.
+	public static final double[][] HOLES = buildHoles();
+
+	private static double[][] buildHoles(){
+		double k = Ball.DIAMETER / 2 * Constant.HOLE_INSET_RATIO;
+		double w = Constant.TABLE_WIDTH;
+		double h = Constant.TABLE_HEIGHT;
+		return new double[][] {
+				{ k, k }, { w / 2, k / 2 }, { w - k, k },
+				{ k, h - k }, { w / 2, h - k / 2 }, { w - k, h - k }
+		};
+	}
 
     private final int playerCount;
 
@@ -25,6 +38,7 @@ public class Game {
 
 	private int[] fouls;
 	private final int[] playerBallCount;
+	private int[] turnsTaken;
 
 	private LocalTime time;
 
@@ -50,6 +64,7 @@ public class Game {
 		turnCount = 2;
 		playerBallCount = new int[playerCount];
 		for (int i = 0; i < playerCount; i++) playerBallCount[i] = ballCountForEachPlayer + 1;
+		turnsTaken = new int[playerCount];
 
 		//시작 메시지 출력
 		printStartMessage();
@@ -166,8 +181,14 @@ public class Game {
 			}
 
 			//플레이어로부터 힘과 각도를 받아서
+			turnsTaken[order]++; //이번 턴을 소진한 것으로 기록
+
 			double angle = players[order].getAngle();
 			double power = players[order].getPower();
+
+			//Player가 반환하는 각도는 실제 대회 클라이언트와 같은 체계다(0도 = +y 방향, 시계 방향으로 증가).
+			//내부 물리 연산은 표준 수학 각도(0도 = +x 방향, 반시계 방향으로 증가)를 쓰므로 변환해준다.
+			angle = (90 - angle + 360) % 360;
 
 			//최대 & 최소 힘 내로 설정
 			if (power > Constant.MAX_POWER) power = Constant.MAX_POWER;
@@ -246,7 +267,10 @@ public class Game {
 					}
 				}
 
-				if (!continueOrder) setNextOrder();
+				//아직 승부가 안 났다면, 모든 플레이어가 최대 턴 수를 소진했는지 확인
+				if (isPlaying && allPlayersReachedMaxTurn()) endByTurnLimit();
+
+				if (isPlaying && !continueOrder) setNextOrder();
 			}
 
 			System.out.println("-------------------------------------------------");
@@ -257,6 +281,40 @@ public class Game {
 	private void setNextOrder(){
 		order = (order + 1) % playerCount;
 		turnCount += 1;
+	}
+
+	/**
+	 * 모든 플레이어가 최대 턴 수(Constant.MAX_TURN)를 소진했는지 확인
+	 */
+	private boolean allPlayersReachedMaxTurn(){
+		for (int taken : turnsTaken) {
+			if (taken < Constant.MAX_TURN) return false;
+		}
+		return true;
+	}
+
+	/**
+	 * 턴 제한에 도달해 게임을 종료. 파울이 더 적은 플레이어가 승리하며,
+	 * 파울 개수가 같다면 후공(더 늦은 순서의 플레이어)이 승리한다.
+	 */
+	private void endByTurnLimit(){
+		System.out.println("모든 플레이어가 " + Constant.MAX_TURN + "턴을 모두 소진했습니다.");
+
+		int minFoul = Integer.MAX_VALUE;
+		for (int f : fouls) minFoul = Math.min(minFoul, f);
+
+		int tiedCount = 0;
+		int winner = -1;
+		for (int i = 0; i < playerCount; i++) {
+			if (fouls[i] == minFoul) {
+				tiedCount++;
+				winner = i; //동률인 경우 인덱스가 더 큰(후공) 플레이어가 최종적으로 남음
+			}
+		}
+
+		System.out.println((winner + 1) + "번 플레이어가 파울 " + fouls[winner] + "회로 승리했습니다"
+				+ (tiedCount > 1 ? " (파울 동률로 후공 승)." : "."));
+		isPlaying = false;
 	}
 
 	/**
@@ -328,15 +386,15 @@ public class Game {
 		double x = Balls[idx].getX();
 		double y = Balls[idx].getY();
 
-        for (int[] hole : HOLES) {
-            if (getDist(new double[]{x, y}, new double[]{(double) hole[0], (double) hole[1]}) < Constant.HOLE_SIZE) {
+        for (double[] hole : HOLES) {
+            if (getDist(new double[]{x, y}, hole) < Constant.HOLE_SIZE) {
 				System.out.printf("%d번 공 포켓!!\n", idx);
 
-				//invalidate
+				//invalidate. 실제 클라이언트처럼 포켓된 공은 (0, 0)이 아니라 테이블 밖을 뜻하는 (-1, -1)로 표시한다.
                 Balls[idx].setValid(false);
 				Balls[idx].setVeloc(0, 0);
-				Balls[idx].setPos(0, 0);
-				balls[idx][0] = balls[idx][1] = 0;
+				Balls[idx].setPos(-1, -1);
+				balls[idx][0] = balls[idx][1] = -1;
 
 				//목적구가 아닌 경우
                 if (!isObjectBall(idx)) {
